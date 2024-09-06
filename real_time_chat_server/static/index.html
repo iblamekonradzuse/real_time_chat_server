@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rust Chat Client</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        #chat {
+            height: 300px;
+            overflow-y: scroll;
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Rust Chat Client</h1>
+    <div id="chat"></div>
+    <input type="text" id="message" placeholder="Type a message...">
+    <button onclick="sendMessage()">Send</button>
+
+    <script>
+        const chat = document.getElementById('chat');
+        const messageInput = document.getElementById('message');
+        let ws;
+
+        function connect() {
+            ws = new WebSocket('ws://localhost:3030/chat');
+
+            ws.onopen = () => {
+                console.log('Connected to chat server');
+            };
+
+            ws.onmessage = (event) => {
+                const message = document.createElement('div');
+                message.textContent = event.data;
+                chat.appendChild(message);
+                chat.scrollTop = chat.scrollHeight;
+            };
+
+            ws.onclose = () => {
+                console.log('Disconnected from chat server');
+                setTimeout(connect, 1000);
+            };
+        }
+
+        function sendMessage() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(messageInput.value);
+                messageInput.value = '';
+            }
+        }
+
+        connect();
+    </script>
+</body>
+</html>
