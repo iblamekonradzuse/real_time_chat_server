@@ -3,62 +3,112 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rust Chat Client</title>
+    <title>Chat Application</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-        #chat {
-            height: 300px;
-            overflow-y: scroll;
-            border: 1px solid #ccc;
-            padding: 10px;
-            margin-bottom: 20px;
-        }
+        .form-container { display: none; }
     </style>
 </head>
 <body>
-    <h1>Rust Chat Client</h1>
-    <div id="chat"></div>
-    <input type="text" id="message" placeholder="Type a message...">
-    <button onclick="sendMessage()">Send</button>
+    <div id="loginForm" class="form-container">
+        <h2>Login</h2>
+        <input type="text" id="loginUsername" placeholder="Username">
+        <input type="password" id="loginPassword" placeholder="Password">
+        <button onclick="login()">Login</button>
+        <p>Don't have an account? <a href="#" onclick="showRegisterForm()">Register</a></p>
+    </div>
+
+    <div id="registerForm" class="form-container">
+        <h2>Register</h2>
+        <input type="text" id="registerUsername" placeholder="Username">
+        <input type="password" id="registerPassword" placeholder="Password">
+        <button onclick="register()">Register</button>
+        <p>Already have an account? <a href="#" onclick="showLoginForm()">Login</a></p>
+    </div>
+
+    <div id="chatForm" class="form-container">
+        <div id="chat"></div>
+        <input type="text" id="msg">
+        <button onclick="sendMessage()">Send</button>
+    </div>
 
     <script>
-        const chat = document.getElementById('chat');
-        const messageInput = document.getElementById('message');
         let ws;
 
-        function connect() {
-            ws = new WebSocket('ws://localhost:3030/chat');
+        function showLoginForm() {
+            $("#loginForm").show();
+            $("#registerForm").hide();
+            $("#chatForm").hide();
+        }
 
-            ws.onopen = () => {
-                console.log('Connected to chat server');
-            };
+        function showRegisterForm() {
+            $("#loginForm").hide();
+            $("#registerForm").show();
+            $("#chatForm").hide();
+        }
 
-            ws.onmessage = (event) => {
-                const message = document.createElement('div');
-                message.textContent = event.data;
-                chat.appendChild(message);
-                chat.scrollTop = chat.scrollHeight;
-            };
+        function showChatForm() {
+            $("#loginForm").hide();
+            $("#registerForm").hide();
+            $("#chatForm").show();
+        }
 
-            ws.onclose = () => {
-                console.log('Disconnected from chat server');
-                setTimeout(connect, 1000);
+        function register() {
+            const username = $("#registerUsername").val();
+            const password = $("#registerPassword").val();
+            
+            $.ajax({
+                url: "/register",
+                type: "POST",
+                contentType: "application/json",
+                data: JSON.stringify({ username, password_hash: password }),
+                success: function(response) {
+                    if (response.status === "success") {
+                        alert("Registration successful. Please login.");
+                        showLoginForm();
+                    } else {
+                        alert(response.message);
+                    }
+                }
+            });
+        }
+
+        function login() {
+            const username = $("#loginUsername").val();
+            const password = $("#loginPassword").val();
+            
+            $.ajax({
+                url: "/login",
+                type: "POST",
+                contentType: "application/json",
+                data: JSON.stringify({ username, password_hash: password }),
+                success: function(response) {
+                    if (response.status === "success") {
+                        showChatForm();
+                        connectWebSocket();
+                    } else {
+                        alert(response.message);
+                    }
+                }
+            });
+        }
+
+        function connectWebSocket() {
+            ws = new WebSocket(`ws://${location.host}/chat`);
+            ws.onmessage = function(event) {
+                $("#chat").append($("<p>").text(event.data));
             };
         }
 
         function sendMessage() {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(messageInput.value);
-                messageInput.value = '';
-            }
+            const message = $("#msg").val();
+            ws.send(message);
+            $("#msg").val("");
         }
 
-        connect();
+        $(document).ready(function() {
+            showLoginForm();
+        });
     </script>
 </body>
 </html>
