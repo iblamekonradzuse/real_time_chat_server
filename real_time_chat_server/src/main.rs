@@ -9,13 +9,19 @@ use rand::Rng;
 use sha2::{Sha256, Digest};
 
 // Our global state
-type Users = Arc<Mutex<HashMap<String, mpsc::UnboundedSender<String>>>>;
+type Users = Arc<Mutex<HashMap<String, (mpsc::UnboundedSender<String>, String)>>>;
 type RegisteredUsers = Arc<Mutex<HashMap<String, User>>>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct User {
     username: String,
     password_hash: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LoginInfo {
+    username: String,
+    password: String,
 }
 
 #[tokio::main]
@@ -35,8 +41,9 @@ async fn main() {
         .and(warp::ws())
         .and(warp::any().map(move || users.clone()))
         .and(warp::any().map(move || tx.clone()))
-        .map(|ws: warp::ws::Ws, users, tx| {
-            ws.on_upgrade(move |socket| user_connected(socket, users, tx))
+        .and(warp::query::<LoginInfo>())
+        .map(|ws: warp::ws::Ws, users, tx, login_info: LoginInfo| {
+            ws.on_upgrade(move |socket| user_connected(socket, users, tx, login_info))
         });
 
     // Define our registration route
@@ -94,6 +101,7 @@ async fn save_registered_users(registered_users: &RegisteredUsers) {
     }
 }
 
+
 async fn register_user(
     user: User,
     registered_users: RegisteredUsers,
@@ -121,7 +129,7 @@ async fn register_user(
 }
 
 async fn login_user(
-    user: User,
+    user: LoginInfo,
     registered_users: RegisteredUsers,
 ) -> Result<impl warp::Reply, warp::Rejection> {
     let lock = registered_users.lock().await;
@@ -129,7 +137,7 @@ async fn login_user(
     if let Some(registered_user) = lock.get(&user.username) {
         // Hash the provided password and compare
         let mut hasher = Sha256::new();
-        hasher.update(&user.password_hash);
+        hasher.update(&user.password);
         let password_hash = format!("{:x}", hasher.finalize());
 
         if registered_user.password_hash == password_hash {
@@ -142,7 +150,7 @@ async fn login_user(
     }
 }
 
-async fn user_connected(ws: warp::ws::WebSocket, users: Users, tx: broadcast::Sender<String>) {
+async fn user_connected(ws: warp::ws::WebSocket, users: Users, tx: broadcast::Sender<String>, login_info: LoginInfo) {
     let my_id = rand::thread_rng().gen::<u64>().to_string();
     let (mut user_ws_tx, mut user_ws_rx) = ws.split();
     let (tx_unbounded, mut rx_unbounded) = mpsc::unbounded_channel();
@@ -156,20 +164,20 @@ async fn user_connected(ws: warp::ws::WebSocket, users: Users, tx: broadcast::Se
         }
     });
 
-    users.lock().await.insert(my_id.clone(), tx_unbounded);
+    users.lock().await.insert(my_id.clone(), (tx_unbounded, login_info.username.clone()));
 
     let mut rx = tx.subscribe();
     let my_id_clone = my_id.clone();
     let users_clone = users.clone();
     tokio::task::spawn(async move {
         while let Ok(msg) = rx.recv().await {
-            if let Some(user_tx) = users_clone.lock().await.get(&my_id_clone) {
+            if let Some((user_tx, _)) = users_clone.lock().await.get(&my_id_clone) {
                 let _ = user_tx.send(msg);
             }
         }
     });
 
-    println!("New chat user: {}", my_id);
+    println!("New chat user: {} ({})", login_info.username, my_id);
 
     while let Some(result) = user_ws_rx.next().await {
         let msg = match result {
@@ -179,24 +187,27 @@ async fn user_connected(ws: warp::ws::WebSocket, users: Users, tx: broadcast::Se
                 break;
             }
         };
-        user_message(my_id.clone(), msg, &tx).await;
+        user_message(my_id.clone(), msg, &users, &tx).await;
     }
 
     user_disconnected(my_id, &users).await;
 }
 
-async fn user_message(my_id: String, msg: warp::ws::Message, tx: &broadcast::Sender<String>) {
+async fn user_message(my_id: String, msg: warp::ws::Message, users: &Users, tx: &broadcast::Sender<String>) {
     let msg = if let Ok(s) = msg.to_str() {
         s
     } else {
         return;
     };
 
-    let new_msg = format!("<User#{}>: {}", my_id, msg);
+    let username = users.lock().await.get(&my_id).map(|(_, name)| name.clone()).unwrap_or_else(|| "Unknown".to_string());
+    let new_msg = format!("{}: {}", username, msg);  // Changed from "<{}>: {}" to "{}: {}"
     let _ = tx.send(new_msg);
 }
 
 async fn user_disconnected(my_id: String, users: &Users) {
-    println!("Good bye user: {}!", my_id);
+    let username = users.lock().await.get(&my_id).map(|(_, name)| name.clone()).unwrap_or_else(|| "Unknown".to_string());
+    println!("Good bye user: {} ({})", username, my_id);
     users.lock().await.remove(&my_id);
 }
+

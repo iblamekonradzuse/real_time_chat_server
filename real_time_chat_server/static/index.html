@@ -4,12 +4,27 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chat Application</title>
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <style>
-        .form-container { display: none; }
+        .form-container {
+            display: none;
+        }
+        #chat {
+            height: 300px;
+            overflow-y: scroll;
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+        .message {
+            margin-bottom: 5px;
+        }
+        .username {
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
+
     <div id="loginForm" class="form-container">
         <h2>Login</h2>
         <input type="text" id="loginUsername" placeholder="Username">
@@ -28,7 +43,7 @@
 
     <div id="chatForm" class="form-container">
         <div id="chat"></div>
-        <input type="text" id="msg">
+        <input type="text" id="messageInput" placeholder="Type a message...">
         <button onclick="sendMessage()">Send</button>
     </div>
 
@@ -36,79 +51,91 @@
         let ws;
 
         function showLoginForm() {
-            $("#loginForm").show();
-            $("#registerForm").hide();
-            $("#chatForm").hide();
+            document.getElementById('loginForm').style.display = 'block';
+            document.getElementById('registerForm').style.display = 'none';
+            document.getElementById('chatForm').style.display = 'none';
         }
 
         function showRegisterForm() {
-            $("#loginForm").hide();
-            $("#registerForm").show();
-            $("#chatForm").hide();
+            document.getElementById('loginForm').style.display = 'none';
+            document.getElementById('registerForm').style.display = 'block';
+            document.getElementById('chatForm').style.display = 'none';
         }
 
         function showChatForm() {
-            $("#loginForm").hide();
-            $("#registerForm").hide();
-            $("#chatForm").show();
+            document.getElementById('loginForm').style.display = 'none';
+            document.getElementById('registerForm').style.display = 'none';
+            document.getElementById('chatForm').style.display = 'block';
         }
 
-        function register() {
-            const username = $("#registerUsername").val();
-            const password = $("#registerPassword").val();
-            
-            $.ajax({
-                url: "/register",
-                type: "POST",
-                contentType: "application/json",
-                data: JSON.stringify({ username, password_hash: password }),
-                success: function(response) {
-                    if (response.status === "success") {
-                        alert("Registration successful. Please login.");
-                        showLoginForm();
-                    } else {
-                        alert(response.message);
-                    }
-                }
+        async function register() {
+            const username = document.getElementById('registerUsername').value;
+            const password = document.getElementById('registerPassword').value;
+
+            const response = await fetch('/register', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ username, password_hash: password }),
             });
+
+            const result = await response.json();
+            alert(result.message);
+
+            if (result.status === 'success') {
+                showLoginForm();
+            }
         }
 
-        function login() {
-            const username = $("#loginUsername").val();
-            const password = $("#loginPassword").val();
-            
-            $.ajax({
-                url: "/login",
-                type: "POST",
-                contentType: "application/json",
-                data: JSON.stringify({ username, password_hash: password }),
-                success: function(response) {
-                    if (response.status === "success") {
-                        showChatForm();
-                        connectWebSocket();
-                    } else {
-                        alert(response.message);
-                    }
-                }
+        async function login() {
+            const username = document.getElementById('loginUsername').value;
+            const password = document.getElementById('loginPassword').value;
+
+            const response = await fetch('/login', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ username, password }),
             });
+
+            const result = await response.json();
+            alert(result.message);
+
+            if (result.status === 'success') {
+                showChatForm();
+                connectWebSocket(username, password);
+            }
         }
 
-        function connectWebSocket() {
-            ws = new WebSocket(`ws://${location.host}/chat`);
+        
+        function connectWebSocket(username, password) {
+            ws = new WebSocket(`ws://${window.location.host}/chat?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`);
+
             ws.onmessage = function(event) {
-                $("#chat").append($("<p>").text(event.data));
+                const chatDiv = document.getElementById('chat');
+                const messageData = event.data.split(': ', 2);  // Split the message into username and content
+                const messageHtml = `<div class="message"><span class="username">${messageData[0]}</span>: ${messageData[1]}</div>`;
+                chatDiv.innerHTML += messageHtml;
+                chatDiv.scrollTop = chatDiv.scrollHeight;
+            };
+
+            ws.onclose = function() {
+                alert('WebSocket connection closed');
+                showLoginForm();
             };
         }
 
         function sendMessage() {
-            const message = $("#msg").val();
+            const messageInput = document.getElementById('messageInput');
+            const message = messageInput.value;
             ws.send(message);
-            $("#msg").val("");
+            messageInput.value = '';
         }
 
-        $(document).ready(function() {
-            showLoginForm();
-        });
+        // Show login form by default
+        showLoginForm();
     </script>
 </body>
 </html>
