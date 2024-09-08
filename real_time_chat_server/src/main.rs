@@ -1,12 +1,15 @@
 use futures::{SinkExt, StreamExt};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc, Mutex};
 use tokio::fs;
+use tokio::sync::{broadcast, mpsc, Mutex};
+use warp::http::{Response, StatusCode};
+use warp::hyper::Body;
 use warp::Filter;
-use rand::Rng;
-use sha2::{Sha256, Digest};
 
 // Our global state
 type Users = Arc<Mutex<HashMap<String, (mpsc::UnboundedSender<String>, String)>>>;
@@ -36,6 +39,10 @@ async fn main() {
     // Create a channel for broadcasting messages to all connected clients
     let (tx, _rx) = broadcast::channel(100);
 
+    // Clone registered_users for each route
+    let register_users = registered_users.clone();
+    let login_users = registered_users.clone();
+
     // Define our WebSocket route
     let chat = warp::path("chat")
         .and(warp::ws())
@@ -47,15 +54,12 @@ async fn main() {
         });
 
     // Define our registration route
-    let register_users = registered_users.clone();
     let register = warp::path("register")
         .and(warp::post())
         .and(warp::body::json())
         .and(warp::any().map(move || register_users.clone()))
         .and_then(register_user);
 
-    // Define our login route
-    let login_users = registered_users.clone();
     let login = warp::path("login")
         .and(warp::post())
         .and(warp::body::json())
@@ -63,19 +67,13 @@ async fn main() {
         .and_then(login_user);
 
     // Serve static files
-    let files = warp::path("static")
-        .and(warp::fs::dir("static"));
+    let files = warp::path("static").and(warp::fs::dir("static"));
 
     // Serve index.html at the root
-    let index = warp::path::end()
-        .and(warp::fs::file("static/index.html"));
+    let index = warp::path::end().and(warp::fs::file("static/index.html"));
 
     // Combine our routes
-    let routes = chat
-        .or(register)
-        .or(login)
-        .or(files)
-        .or(index);
+    let routes = chat.or(register).or(login).or(files).or(index);
 
     // Start the server
     println!("Server started at http://localhost:3030");
@@ -101,7 +99,6 @@ async fn save_registered_users(registered_users: &RegisteredUsers) {
     }
 }
 
-
 async fn register_user(
     user: User,
     registered_users: RegisteredUsers,
@@ -109,11 +106,17 @@ async fn register_user(
     let mut lock = registered_users.lock().await;
 
     if lock.contains_key(&user.username) {
-        Ok(warp::reply::json(&serde_json::json!({"status": "error", "message": "Username already exists"})))
+        Ok(warp::reply::with_status(
+            warp::reply::json(&serde_json::json!({
+                "status": "error",
+                "message": "Username already exists"
+            })),
+            warp::http::StatusCode::BAD_REQUEST,
+        ))
     } else {
         // Hash the password before storing
         let mut hasher = Sha256::new();
-        hasher.update(user.password_hash);
+        hasher.update(&user.password_hash);
         let password_hash = format!("{:x}", hasher.finalize());
 
         let new_user = User {
@@ -124,10 +127,28 @@ async fn register_user(
         lock.insert(user.username.clone(), new_user);
         drop(lock);
         save_registered_users(&registered_users).await;
-        Ok(warp::reply::json(&serde_json::json!({"status": "success", "message": "User registered successfully"})))
+
+        Ok(warp::reply::with_status(
+            warp::reply::json(&serde_json::json!({
+                "status": "success",
+                "message": "User registered successfully"
+            })),
+            warp::http::StatusCode::OK,
+        ))
     }
 }
 
+// Helper function to create a consistent JSON response
+fn create_json_response(status: StatusCode, body: serde_json::Value) -> Response<Body> {
+    let json = serde_json::to_string(&body).unwrap_or_else(|_| "{}".to_string());
+    Response::builder()
+        .status(status)
+        .header("Content-Type", "application/json")
+        .body(Body::from(json))
+        .unwrap()
+}
+
+// Update login_user function similarly
 async fn login_user(
     user: LoginInfo,
     registered_users: RegisteredUsers,
@@ -141,16 +162,39 @@ async fn login_user(
         let password_hash = format!("{:x}", hasher.finalize());
 
         if registered_user.password_hash == password_hash {
-            Ok(warp::reply::json(&serde_json::json!({"status": "success", "message": "Login successful"})))
+            Ok(create_json_response(
+                StatusCode::OK,
+                json!({
+                    "status": "success",
+                    "message": "Login successful"
+                }),
+            ))
         } else {
-            Ok(warp::reply::json(&serde_json::json!({"status": "error", "message": "Invalid password"})))
+            Ok(create_json_response(
+                StatusCode::UNAUTHORIZED,
+                json!({
+                    "status": "error",
+                    "message": "Invalid password"
+                }),
+            ))
         }
     } else {
-        Ok(warp::reply::json(&serde_json::json!({"status": "error", "message": "User not found"})))
+        Ok(create_json_response(
+            StatusCode::NOT_FOUND,
+            json!({
+                "status": "error",
+                "message": "User not found"
+            }),
+        ))
     }
 }
 
-async fn user_connected(ws: warp::ws::WebSocket, users: Users, tx: broadcast::Sender<String>, login_info: LoginInfo) {
+async fn user_connected(
+    ws: warp::ws::WebSocket,
+    users: Users,
+    tx: broadcast::Sender<String>,
+    login_info: LoginInfo,
+) {
     let my_id = rand::thread_rng().gen::<u64>().to_string();
     let (mut user_ws_tx, mut user_ws_rx) = ws.split();
     let (tx_unbounded, mut rx_unbounded) = mpsc::unbounded_channel();
@@ -164,7 +208,10 @@ async fn user_connected(ws: warp::ws::WebSocket, users: Users, tx: broadcast::Se
         }
     });
 
-    users.lock().await.insert(my_id.clone(), (tx_unbounded, login_info.username.clone()));
+    users
+        .lock()
+        .await
+        .insert(my_id.clone(), (tx_unbounded, login_info.username.clone()));
 
     let mut rx = tx.subscribe();
     let my_id_clone = my_id.clone();
@@ -193,21 +240,35 @@ async fn user_connected(ws: warp::ws::WebSocket, users: Users, tx: broadcast::Se
     user_disconnected(my_id, &users).await;
 }
 
-async fn user_message(my_id: String, msg: warp::ws::Message, users: &Users, tx: &broadcast::Sender<String>) {
+async fn user_message(
+    my_id: String,
+    msg: warp::ws::Message,
+    users: &Users,
+    tx: &broadcast::Sender<String>,
+) {
     let msg = if let Ok(s) = msg.to_str() {
         s
     } else {
         return;
     };
 
-    let username = users.lock().await.get(&my_id).map(|(_, name)| name.clone()).unwrap_or_else(|| "Unknown".to_string());
-    let new_msg = format!("{}: {}", username, msg);  // Changed from "<{}>: {}" to "{}: {}"
+    let username = users
+        .lock()
+        .await
+        .get(&my_id)
+        .map(|(_, name)| name.clone())
+        .unwrap_or_else(|| "Unknown".to_string());
+    let new_msg = format!("{}: {}", username, msg); // Changed from "<{}>: {}" to "{}: {}"
     let _ = tx.send(new_msg);
 }
 
 async fn user_disconnected(my_id: String, users: &Users) {
-    let username = users.lock().await.get(&my_id).map(|(_, name)| name.clone()).unwrap_or_else(|| "Unknown".to_string());
+    let username = users
+        .lock()
+        .await
+        .get(&my_id)
+        .map(|(_, name)| name.clone())
+        .unwrap_or_else(|| "Unknown".to_string());
     println!("Good bye user: {} ({})", username, my_id);
     users.lock().await.remove(&my_id);
 }
-
