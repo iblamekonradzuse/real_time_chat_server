@@ -338,9 +338,10 @@ async fn user_message(
         }
         "delete" => {
             if let Some(id) = message_action.id {
-                if let Some(message) = messages.lock().await.get(&id) {
+                let mut messages_lock = messages.lock().await;
+                if let Some(message) = messages_lock.get(&id) {
                     if message.username == username {
-                        messages.lock().await.remove(&id);
+                        messages_lock.remove(&id);
                         let delete_msg = json!({
                             "type": "delete",
                             "id": id
