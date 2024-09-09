@@ -4,10 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chat Application</title>
-          <link rel="stylesheet"  href="./static/styles.css"/>
+    <link rel="stylesheet" href="static/styles.css">
 </head>
 <body>
-    <button class="dark-mode-toggle" onclick="toggleDarkMode()">🌓</button>
     <div class="container">
         <div id="loginForm" class="form-container">
             <h2>Login</h2>
@@ -28,9 +27,9 @@
         <div id="chatForm" class="form-container" style="display: none;">
             <div id="chat"></div>
             <form id="messageForm">
-                <input type="text" id="message" placeholder="Type a message" required>
-                <button type="submit" id="sendButton">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                <input type="text" id="message" placeholder="Type your message..." required>
+                <button id="sendButton" type="submit">
+                    <svg viewBox="0 0 24 24">
                         <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
                     </svg>
                 </button>
@@ -38,8 +37,8 @@
         </div>
     </div>
 
-    <script src="./static/script.js">
+    <button class="dark-mode-toggle" onclick="toggleDarkMode()">🌓</button>
 
-    </script>
+    <script src="static/script.js"></script>
 </body>
 </html>
